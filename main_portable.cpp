@@ -2,9 +2,11 @@
 // Multithreading-based Application for Resource Utilization
 // and Task Execution   (OS Mini Project - PORTABLE VERSION)
 //
-// Works on Windows and Linux. No Linux system calls used.
+// Works on Windows and Linux.
 //
-// CO1: Threads, CPU scheduling, synchronization (mutex, cond. var)
+// CO1: Threads, CPU scheduling (FCFS, SJF Non-Preemptive,
+//      Priority Non-Preemptive, Round Robin, SRTF Preemptive SJF,
+//      Preemptive Priority), synchronization (mutex, cond. var)
 // CO2: Deadlock handling (Banker's), memory management algorithms
 // Resource utilization: worker-thread utilization measured with
 //                       std::chrono (busy time / total time)
@@ -37,6 +39,7 @@ struct Task {
     int id;
     int burst;
     int priority;   // lower number = higher priority
+    int arrival = 0; // arrival time (default 0)
 };
 
 struct Result {
@@ -71,15 +74,18 @@ void monitorLoop(atomic<bool> &run, atomic<int> &active, int workers) {
 }
 
 // ============================================================
-// CPU Scheduling (all tasks arrive at time 0)
-//   algo: 1=FCFS, 2=SJF, 3=Priority, 4=Round Robin
+// CPU Scheduling (Supports Arrival Times and Preemption)
+//   algo: 1=FCFS, 2=SJF(Non-Preempt), 3=Priority(Non-Preempt),
+//         4=Round Robin, 5=SRTF(Preempt SJF), 6=Priority(Preempt)
 // ============================================================
 string algoName(int a) {
     switch (a) {
         case 1: return "FCFS";
-        case 2: return "SJF";
-        case 3: return "Priority";
+        case 2: return "SJF (Non-Preemptive)";
+        case 3: return "Priority (Non-Preemptive)";
         case 4: return "Round Robin";
+        case 5: return "SRTF (Preemptive SJF)";
+        case 6: return "Priority (Preemptive)";
     }
     return "?";
 }
@@ -91,41 +97,154 @@ Result schedule(int algo, const vector<Task> &tasks, int quantum) {
     r.wt.assign(n, 0);
     r.tat.assign(n, 0);
 
-    if (algo != 4) {
+    if (algo == 1) {
+        // FCFS with arrival times
         vector<int> order(n);
         iota(order.begin(), order.end(), 0);
-        if (algo == 2)
-            stable_sort(order.begin(), order.end(),
-                        [&](int a, int b){ return tasks[a].burst < tasks[b].burst; });
-        if (algo == 3)
-            stable_sort(order.begin(), order.end(),
-                        [&](int a, int b){ return tasks[a].priority < tasks[b].priority; });
+        stable_sort(order.begin(), order.end(),
+                    [&](int a, int b){ return tasks[a].arrival < tasks[b].arrival; });
         int t = 0;
         for (size_t k = 0; k < order.size(); k++) {
             int idx = order[k];
-            r.wt[idx] = t;
+            if (t < tasks[idx].arrival) t = tasks[idx].arrival;
+            r.wt[idx] = t - tasks[idx].arrival;
             r.slices.push_back(make_pair(tasks[idx].id, tasks[idx].burst));
             t += tasks[idx].burst;
-            r.tat[idx] = t;
+            r.tat[idx] = t - tasks[idx].arrival;
         }
-    } else {
+    } else if (algo == 2 || algo == 3) {
+        // Non-preemptive SJF / Priority with arrival times
+        vector<bool> done(n, false);
+        int completed = 0, t = 0;
+        while (completed < n) {
+            int best = -1;
+            for (int i = 0; i < n; i++) {
+                if (!done[i] && tasks[i].arrival <= t) {
+                    if (best == -1) best = i;
+                    else if (algo == 2 && tasks[i].burst < tasks[best].burst) best = i;
+                    else if (algo == 3 && tasks[i].priority < tasks[best].priority) best = i;
+                }
+            }
+            if (best == -1) {
+                int nextArr = 1e9;
+                for (int i = 0; i < n; i++) if (!done[i]) nextArr = min(nextArr, tasks[i].arrival);
+                t = nextArr;
+                continue;
+            }
+            r.wt[best] = t - tasks[best].arrival;
+            r.slices.push_back(make_pair(tasks[best].id, tasks[best].burst));
+            t += tasks[best].burst;
+            r.tat[best] = t - tasks[best].arrival;
+            done[best] = true;
+            completed++;
+        }
+    } else if (algo == 4) {
+        // Round Robin with arrival times
         vector<int> rem(n);
+        for (int i = 0; i < n; i++) rem[i] = tasks[i].burst;
+        vector<int> order(n);
+        iota(order.begin(), order.end(), 0);
+        stable_sort(order.begin(), order.end(), [&](int a, int b){ return tasks[a].arrival < tasks[b].arrival; });
+
         queue<int> q;
-        for (int i = 0; i < n; i++) { rem[i] = tasks[i].burst; q.push(i); }
-        int t = 0;
-        while (!q.empty()) {
+        vector<bool> inQueue(n, false);
+        int t = 0, completed = 0;
+
+        auto pushArrived = [&](int curT) {
+            for (int idx : order) {
+                if (tasks[idx].arrival <= curT && !inQueue[idx] && rem[idx] > 0) {
+                    q.push(idx);
+                    inQueue[idx] = true;
+                }
+            }
+        };
+
+        pushArrived(t);
+
+        while (completed < n) {
+            if (q.empty()) {
+                int nextArr = 1e9;
+                for (int i = 0; i < n; i++) if (rem[i] > 0) nextArr = min(nextArr, tasks[i].arrival);
+                t = nextArr;
+                pushArrived(t);
+                if (q.empty()) continue;
+            }
+
             int idx = q.front(); q.pop();
+            inQueue[idx] = false;
+
             int run = min(quantum, rem[idx]);
             r.slices.push_back(make_pair(tasks[idx].id, run));
             t += run;
             rem[idx] -= run;
-            if (rem[idx] > 0) q.push(idx);
-            else {
-                r.tat[idx] = t;
-                r.wt[idx]  = t - tasks[idx].burst;
+
+            pushArrived(t);
+
+            if (rem[idx] > 0) {
+                q.push(idx);
+                inQueue[idx] = true;
+            } else {
+                completed++;
+                r.tat[idx] = t - tasks[idx].arrival;
+                r.wt[idx]  = r.tat[idx] - tasks[idx].burst;
+            }
+        }
+    } else if (algo == 5 || algo == 6) {
+        // 5 = SRTF (Preemptive SJF), 6 = Preemptive Priority
+        vector<int> rem(n);
+        for (int i = 0; i < n; i++) rem[i] = tasks[i].burst;
+        int completed = 0, t = 0, cur = -1, sliceStart = 0;
+
+        while (completed < n) {
+            int best = -1;
+            for (int i = 0; i < n; i++) {
+                if (tasks[i].arrival <= t && rem[i] > 0) {
+                    if (best == -1) {
+                        best = i;
+                    } else if (algo == 5) {
+                        if (rem[i] < rem[best] || (rem[i] == rem[best] && tasks[i].arrival < tasks[best].arrival))
+                            best = i;
+                    } else { // algo == 6
+                        if (tasks[i].priority < tasks[best].priority || (tasks[i].priority == tasks[best].priority && tasks[i].arrival < tasks[best].arrival))
+                            best = i;
+                    }
+                }
+            }
+
+            if (best == -1) {
+                if (cur != -1) {
+                    r.slices.push_back(make_pair(tasks[cur].id, t - sliceStart));
+                    cur = -1;
+                }
+                int nextArr = 1e9;
+                for (int i = 0; i < n; i++) if (rem[i] > 0) nextArr = min(nextArr, tasks[i].arrival);
+                t = nextArr;
+                sliceStart = t;
+                continue;
+            }
+
+            if (best != cur) {
+                if (cur != -1) {
+                    r.slices.push_back(make_pair(tasks[cur].id, t - sliceStart));
+                }
+                cur = best;
+                sliceStart = t;
+            }
+
+            rem[best]--;
+            t++;
+
+            if (rem[best] == 0) {
+                completed++;
+                r.tat[best] = t - tasks[best].arrival;
+                r.wt[best] = r.tat[best] - tasks[best].burst;
+                r.slices.push_back(make_pair(tasks[best].id, t - sliceStart));
+                cur = -1;
+                sliceStart = t;
             }
         }
     }
+
     double sw = 0, st = 0;
     for (int i = 0; i < n; i++) { sw += r.wt[i]; st += r.tat[i]; }
     r.avgWT  = sw / n;
@@ -134,9 +253,9 @@ Result schedule(int algo, const vector<Task> &tasks, int quantum) {
 }
 
 void printTasks() {
-    printf("\n%-8s %-8s %-8s\n", "Task", "Burst", "Priority");
+    printf("\n%-8s %-10s %-8s %-8s\n", "Task", "Arrival", "Burst", "Priority");
     for (size_t i = 0; i < gTasks.size(); i++)
-        printf("T%-7d %-8d %-8d\n", gTasks[i].id, gTasks[i].burst, gTasks[i].priority);
+        printf("T%-7d %-10d %-8d %-8d\n", gTasks[i].id, gTasks[i].arrival, gTasks[i].burst, gTasks[i].priority);
 }
 
 void printResult(const Result &r) {
@@ -146,9 +265,9 @@ void printResult(const Result &r) {
         printf("| T%d (%d-%d) ", r.slices[i].first, t, t + r.slices[i].second);
         t += r.slices[i].second;
     }
-    printf("|\n\n%-8s %-8s %-10s %-12s\n", "Task", "Burst", "Waiting", "Turnaround");
+    printf("|\n\n%-8s %-10s %-8s %-10s %-12s\n", "Task", "Arrival", "Burst", "Waiting", "Turnaround");
     for (size_t i = 0; i < gTasks.size(); i++)
-        printf("T%-7d %-8d %-10d %-12d\n", gTasks[i].id, gTasks[i].burst, r.wt[i], r.tat[i]);
+        printf("T%-7d %-10d %-8d %-10d %-12d\n", gTasks[i].id, gTasks[i].arrival, gTasks[i].burst, r.wt[i], r.tat[i]);
     printf("\nAverage Waiting Time    = %.2f\nAverage Turnaround Time = %.2f\n", r.avgWT, r.avgTAT);
 }
 
@@ -247,9 +366,11 @@ ExecStats executeSlices(const vector<pair<int,int> > &slices, int workers,
 }
 
 void createTasks() {
-    int n, mode;
+    int n, mode, hasArrival = 0;
     cout << "Number of tasks: ";
     cin >> n;
+    cout << "Include custom Arrival Times? (1 = yes, 0 = all arrive at 0): ";
+    cin >> hasArrival;
     cout << "1 = Enter manually, 2 = Random: ";
     cin >> mode;
     gTasks.clear();
@@ -258,9 +379,16 @@ void createTasks() {
         Task t;
         t.id = i;
         if (mode == 1) {
-            cout << "Task " << i << " -> burst time and priority (1 = highest): ";
-            cin >> t.burst >> t.priority;
+            if (hasArrival == 1) {
+                cout << "Task " << i << " -> arrival time, burst time and priority (1 = highest): ";
+                cin >> t.arrival >> t.burst >> t.priority;
+            } else {
+                t.arrival = 0;
+                cout << "Task " << i << " -> burst time and priority (1 = highest): ";
+                cin >> t.burst >> t.priority;
+            }
         } else {
+            t.arrival = (hasArrival == 1) ? (rand() % 4) : 0;
             t.burst = rand() % 8 + 2;
             t.priority = rand() % 5 + 1;
         }
@@ -272,9 +400,10 @@ void createTasks() {
 void runScheduling() {
     if (gTasks.empty()) { cout << "Create tasks first (option 1).\n"; return; }
     int a, q = 2;
-    cout << "1.FCFS  2.SJF  3.Priority  4.Round Robin : ";
+    cout << "\nChoose Algorithm:\n";
+    cout << "1. FCFS\n2. SJF (Non-Preemptive)\n3. Priority (Non-Preemptive)\n4. Round Robin\n5. SRTF (Preemptive SJF)\n6. Priority (Preemptive)\nChoice (1-6): ";
     cin >> a;
-    if (a < 1 || a > 4) { cout << "Invalid choice.\n"; return; }
+    if (a < 1 || a > 6) { cout << "Invalid choice.\n"; return; }
     if (a == 4) { cout << "Time quantum: "; cin >> q; if (q < 1) q = 1; }
     Result r = schedule(a, gTasks, q);
     printResult(r);
@@ -291,12 +420,12 @@ void compareAll() {
     cin >> q;
     if (q < 1) q = 1;
     printTasks();
-    printf("\n%-14s %-18s %-20s\n", "Algorithm", "Avg Waiting Time", "Avg Turnaround Time");
-    printf("---------------------------------------------------------\n");
+    printf("\n%-26s %-18s %-20s\n", "Algorithm", "Avg Waiting Time", "Avg Turnaround Time");
+    printf("-----------------------------------------------------------------\n");
     double bestWT = 1e18; string best;
-    for (int a = 1; a <= 4; a++) {
+    for (int a = 1; a <= 6; a++) {
         Result r = schedule(a, gTasks, q);
-        printf("%-14s %-18.2f %-20.2f\n", r.name.c_str(), r.avgWT, r.avgTAT);
+        printf("%-26s %-18.2f %-20.2f\n", r.name.c_str(), r.avgWT, r.avgTAT);
         if (r.avgWT < bestWT) { bestWT = r.avgWT; best = r.name; }
     }
     printf("\nConclusion: %s gives the lowest average waiting time (%.2f) for this task set.\n",
@@ -503,9 +632,9 @@ void memoryAlloc() {
     }
 
     printf("\n=========== COMPARISON ===========\n");
-    printf("%-12s %-20s %-14s %-18s\n", "Algorithm", "Internal Frag.", "Unallocated", "Free blocks total");
+    printf("%-26s %-20s %-14s %-18s\n", "Algorithm", "Internal Frag.", "Unallocated", "Free blocks total");
     for (size_t i = 0; i < summary.size(); i++)
-        printf("%-12s %-20d %-14d %-18d\n", summary[i].name.c_str(), summary[i].internalFrag,
+        printf("%-26s %-20d %-14d %-18d\n", summary[i].name.c_str(), summary[i].internalFrag,
                summary[i].unalloc, summary[i].freeBlocksTotal);
 }
 
@@ -515,12 +644,12 @@ void memoryAlloc() {
 int main() {
     int ch;
     do {
-        printf("\n=========================================\n");
-        printf(" OS MINI PROJECT: Multithreaded Task Manager\n");
-        printf("=========================================\n");
-        printf(" 1. Create tasks\n");
-        printf(" 2. Run scheduling (FCFS/SJF/Priority/RR) + thread execution\n");
-        printf(" 3. Compare all scheduling algorithms\n");
+        printf("\n=======================================================\n");
+        printf(" OS MINI PROJECT: Multithreaded Task & Resource Manager\n");
+        printf("=======================================================\n");
+        printf(" 1. Create tasks (supports Arrival Times)\n");
+        printf(" 2. Run scheduling (FCFS, SJF Non-Preempt/Preempt, Priority Non-Preempt/Preempt, RR)\n");
+        printf(" 3. Compare all 6 scheduling algorithms\n");
         printf(" 4. Deadlock handling (Banker's Algorithm)\n");
         printf(" 5. Memory allocation (First/Best/Worst Fit)\n");
         printf(" 6. Resource utilization analysis (1-4 worker threads)\n");

@@ -96,6 +96,9 @@
             <button onclick="loadSampleTasksPreset('rscoe')" class="px-3 py-1.5 text-xs font-semibold rounded bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900 transition flex items-center gap-1.5">
               <i class="fa-solid fa-book-bookmark"></i> RSCOE Report Sample (3 Tasks)
             </button>
+            <button onclick="loadSampleTasksPreset('preemptive_demo')" class="px-3 py-1.5 text-xs font-semibold rounded bg-violet-950 text-violet-300 border border-violet-800 hover:bg-violet-900 transition flex items-center gap-1.5">
+              <i class="fa-solid fa-arrows-split-up-and-left"></i> Preemption Demo (AT: 0, 1, 2, 3)
+            </button>
             <button onclick="loadSampleTasksPreset('random')" class="px-3 py-1.5 text-xs font-semibold rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition flex items-center gap-1.5">
               <i class="fa-solid fa-dice"></i> Generate Random (5 Tasks)
             </button>
@@ -111,6 +114,7 @@
             <thead class="bg-slate-800/80 text-xs uppercase font-semibold text-slate-400 border-b border-slate-800">
               <tr>
                 <th class="py-2.5 px-4">Task ID</th>
+                <th class="py-2.5 px-4">Arrival Time (AT)</th>
                 <th class="py-2.5 px-4">Burst Time (BT)</th>
                 <th class="py-2.5 px-4">Priority (1 = Highest)</th>
                 <th class="py-2.5 px-4 text-center">Action</th>
@@ -128,9 +132,11 @@
             <label class="block text-xs font-medium text-slate-400 mb-1">Select Scheduling Algorithm</label>
             <select id="algoSelect" onchange="toggleQuantumInput()" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500">
               <option value="1">1. First-Come First-Served (FCFS)</option>
-              <option value="2">2. Shortest Job First (SJF)</option>
+              <option value="2">2. Shortest Job First (SJF - Non-Preemptive)</option>
               <option value="3" selected>3. Priority Scheduling (Non-Preemptive)</option>
               <option value="4">4. Round Robin (RR)</option>
+              <option value="5">5. Shortest Remaining Time First (SRTF / Preemptive SJF)</option>
+              <option value="6">6. Priority Scheduling (Preemptive)</option>
             </select>
           </div>
 
@@ -147,7 +153,7 @@
               <i class="fa-solid fa-play"></i> Run Scheduler
             </button>
             <button onclick="compareAllAlgorithms()" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-sm transition flex items-center gap-2">
-              <i class="fa-solid fa-code-compare"></i> Compare All 4
+              <i class="fa-solid fa-code-compare"></i> Compare All 6
             </button>
           </div>
         </div>
@@ -209,6 +215,7 @@
               <thead class="bg-slate-800/80 text-xs uppercase font-semibold text-slate-400 border-b border-slate-800">
                 <tr>
                   <th class="py-2.5 px-4">Task</th>
+                  <th class="py-2.5 px-4">Arrival (AT)</th>
                   <th class="py-2.5 px-4">Burst (BT)</th>
                   <th class="py-2.5 px-4">Priority</th>
                   <th class="py-2.5 px-4">Waiting Time (WT)</th>
@@ -237,7 +244,7 @@
         <div class="flex items-center justify-between mb-4">
           <div>
             <h3 class="text-base font-bold text-white flex items-center gap-2">
-              <i class="fa-solid fa-ranking-star text-amber-400"></i> Comparative Analysis: All 4 CPU Scheduling Algorithms
+              <i class="fa-solid fa-ranking-star text-amber-400"></i> Comparative Analysis: All 6 CPU Scheduling Algorithms (Preemptive & Non-Preemptive)
             </h3>
             <p id="compareConclusionText" class="text-xs text-emerald-400 font-medium mt-1">SJF gives the lowest average waiting time (1.33) for this task set.</p>
           </div>

@@ -71,14 +71,17 @@ g++ -std=c++11 -pthread cpp/os_project_enhanced.cpp -o os_project
 ## 🔬 Core Features & Laboratory Experiment Coverage
 
 ### 1. CPU Scheduling & Visual Gantt Chart (CO1)
-- **Algorithms Implemented:**
-  - **FCFS** (First-Come First-Served)
-  - **SJF** (Shortest Job First – non-preemptive, minimum average waiting time)
-  - **Priority Scheduling** (lower number = higher priority)
-  - **Round Robin** (preemptive time-slicing with user-definable time quantum $q$)
-- **Visual Gantt Chart:** Dynamic horizontal timeline with color-coded process blocks, context switch boundaries, and start/finish timestamps.
+- **6 Algorithms Implemented (Non-Preemptive & Preemptive):**
+  - **FCFS** (First-Come First-Served with arrival time handling)
+  - **SJF (Non-Preemptive)** (Shortest Job First)
+  - **Priority (Non-Preemptive)** (Static priority assignment, lower number = higher priority)
+  - **Round Robin** (Preemptive time-slicing with user-definable time quantum $q$)
+  - **SRTF / Preemptive SJF** (Shortest Remaining Time First – dynamically preempts longer jobs when shorter bursts arrive)
+  - **Preemptive Priority** (Preempts currently running job when a process with higher priority arrives)
+- **Arrival Time ($AT$) Support:** Full support for zero and non-zero arrival times, illustrating real-world context switching and preemption.
+- **Visual Gantt Chart:** Dynamic horizontal timeline with color-coded process blocks, preemption boundaries, and start/finish timestamps.
 - **Metrics Calculated:** Waiting Time ($WT$), Turnaround Time ($TAT$), Completion Time ($CT$), and Average $WT$ / $TAT$.
-- **Compare All Feature:** Side-by-side comparative table and Chart.js bar graph proving SJF achieves minimum average waiting time.
+- **Compare All 6 Feature:** Side-by-side comparative table and Chart.js bar graph comparing all 6 algorithms on the same task set.
 
 ### 2. Real-Time Multithreaded Worker Pool (CO1, CO3)
 - **Producer-Consumer Model:**

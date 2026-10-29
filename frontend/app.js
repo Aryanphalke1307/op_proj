@@ -103,14 +103,19 @@ function renderTaskTable() {
     tr.innerHTML = `
       <td class="py-2 px-4 font-bold text-cyan-400">T${t.id}</td>
       <td class="py-2 px-4">
+        <input type="number" min="0" max="100" value="${t.arrival ?? 0}" 
+          onchange="updateTaskField(${index}, 'arrival', this.value)" 
+          class="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs">
+      </td>
+      <td class="py-2 px-4">
         <input type="number" min="1" max="50" value="${t.burst}" 
           onchange="updateTaskField(${index}, 'burst', this.value)" 
-          class="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs">
+          class="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs">
       </td>
       <td class="py-2 px-4">
         <input type="number" min="1" max="20" value="${t.priority}" 
           onchange="updateTaskField(${index}, 'priority', this.value)" 
-          class="w-20 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs">
+          class="w-16 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs">
       </td>
       <td class="py-2 px-4 text-center">
         <button onclick="removeTaskRow(${index})" class="text-rose-400 hover:text-rose-300 text-xs transition">
@@ -124,8 +129,12 @@ function renderTaskTable() {
 
 function updateTaskField(index, field, value) {
   const num = parseInt(value, 10);
-  if (!isNaN(num) && num > 0) {
-    state.tasks[index][field] = num;
+  if (!isNaN(num)) {
+    if (field === 'arrival' && num >= 0) {
+      state.tasks[index][field] = num;
+    } else if (num > 0) {
+      state.tasks[index][field] = num;
+    }
   }
 }
 
@@ -152,6 +161,14 @@ function loadSampleTasksPreset(type) {
       { id: 3, burst: 1, priority: 1, arrival: 0 }
     ];
     document.getElementById('algoSelect').value = '3'; // Priority
+  } else if (type === 'preemptive_demo') {
+    state.tasks = [
+      { id: 1, burst: 8, priority: 3, arrival: 0 },
+      { id: 2, burst: 4, priority: 1, arrival: 1 },
+      { id: 3, burst: 9, priority: 4, arrival: 2 },
+      { id: 4, burst: 5, priority: 2, arrival: 3 }
+    ];
+    document.getElementById('algoSelect').value = '5'; // SRTF
   } else if (type === 'random') {
     state.tasks = [];
     const count = 5;
@@ -160,7 +177,7 @@ function loadSampleTasksPreset(type) {
         id: i,
         burst: Math.floor(Math.random() * 8) + 2,
         priority: Math.floor(Math.random() * 5) + 1,
-        arrival: 0
+        arrival: Math.floor(Math.random() * 4)
       });
     }
   }
@@ -179,35 +196,40 @@ function toggleQuantumInput() {
   }
 }
 
-// Local scheduling calculation (matches C++ and Python identically)
+// Local scheduling calculation (supports all 6 algorithms)
 function localSchedule(algoId, tasks, quantum) {
   const n = tasks.length;
-  const names = { 1: "FCFS", 2: "SJF", 3: "Priority", 4: "Round Robin" };
+  const names = {
+    1: "FCFS",
+    2: "SJF (Non-Preemptive)",
+    3: "Priority (Non-Preemptive)",
+    4: "Round Robin",
+    5: "SJF Preemptive (SRTF)",
+    6: "Priority Preemptive"
+  };
   const name = names[algoId] || "Unknown";
 
   let wt = new Array(n).fill(0);
   let tat = new Array(n).fill(0);
   let ct = new Array(n).fill(0);
   let slices = [];
-  let currentTime = 0;
 
-  if (algoId !== 4) {
-    let order = Array.from({ length: n }, (_, i) => i);
-    if (algoId === 2) {
-      order.sort((a, b) => tasks[a].burst - tasks[b].burst);
-    } else if (algoId === 3) {
-      order.sort((a, b) => tasks[a].priority - tasks[b].priority);
-    }
-
+  if (algoId === 1) {
+    // FCFS with arrival time
+    const order = Array.from({ length: n }, (_, i) => i)
+      .sort((a, b) => (tasks[a].arrival || 0) - (tasks[b].arrival || 0) || tasks[a].id - tasks[b].id);
+    let currentTime = 0;
     for (let k = 0; k < order.length; k++) {
       let idx = order[k];
       let t = tasks[idx];
+      let arr = t.arrival || 0;
+      if (currentTime < arr) currentTime = arr;
       let start_t = currentTime;
       let end_t = currentTime + t.burst;
-      wt[idx] = start_t;
       currentTime = end_t;
-      tat[idx] = currentTime;
       ct[idx] = currentTime;
+      tat[idx] = ct[idx] - arr;
+      wt[idx] = tat[idx] - t.burst;
 
       slices.push({
         taskId: t.id,
@@ -217,13 +239,118 @@ function localSchedule(algoId, tasks, quantum) {
         duration: t.burst
       });
     }
-  } else {
+  } else if (algoId === 2) {
+    // SJF Non-Preemptive
+    let completed = 0;
+    let currentTime = 0;
+    let isDone = new Array(n).fill(false);
+
+    while (completed < n) {
+      let ready = [];
+      for (let i = 0; i < n; i++) {
+        if (!isDone[i] && (tasks[i].arrival || 0) <= currentTime) ready.push(i);
+      }
+      if (ready.length === 0) {
+        let nextArr = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (!isDone[i] && (tasks[i].arrival || 0) < nextArr) nextArr = tasks[i].arrival || 0;
+        }
+        currentTime = nextArr;
+        continue;
+      }
+      ready.sort((a, b) => tasks[a].burst - tasks[b].burst || (tasks[a].arrival || 0) - (tasks[b].arrival || 0) || tasks[a].id - tasks[b].id);
+      let best = ready[0];
+      let t = tasks[best];
+      let start_t = currentTime;
+      let end_t = currentTime + t.burst;
+      currentTime = end_t;
+      ct[best] = currentTime;
+      tat[best] = ct[best] - (t.arrival || 0);
+      wt[best] = tat[best] - t.burst;
+      isDone[best] = true;
+      completed++;
+
+      slices.push({
+        taskId: t.id,
+        taskIndex: best,
+        start: start_t,
+        end: end_t,
+        duration: t.burst
+      });
+    }
+  } else if (algoId === 3) {
+    // Priority Non-Preemptive
+    let completed = 0;
+    let currentTime = 0;
+    let isDone = new Array(n).fill(false);
+
+    while (completed < n) {
+      let ready = [];
+      for (let i = 0; i < n; i++) {
+        if (!isDone[i] && (tasks[i].arrival || 0) <= currentTime) ready.push(i);
+      }
+      if (ready.length === 0) {
+        let nextArr = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (!isDone[i] && (tasks[i].arrival || 0) < nextArr) nextArr = tasks[i].arrival || 0;
+        }
+        currentTime = nextArr;
+        continue;
+      }
+      ready.sort((a, b) => tasks[a].priority - tasks[b].priority || (tasks[a].arrival || 0) - (tasks[b].arrival || 0) || tasks[a].id - tasks[b].id);
+      let best = ready[0];
+      let t = tasks[best];
+      let start_t = currentTime;
+      let end_t = currentTime + t.burst;
+      currentTime = end_t;
+      ct[best] = currentTime;
+      tat[best] = ct[best] - (t.arrival || 0);
+      wt[best] = tat[best] - t.burst;
+      isDone[best] = true;
+      completed++;
+
+      slices.push({
+        taskId: t.id,
+        taskIndex: best,
+        start: start_t,
+        end: end_t,
+        duration: t.burst
+      });
+    }
+  } else if (algoId === 4) {
+    // Round Robin with arrival time
     const qVal = Math.max(1, quantum);
     let rem = tasks.map(t => t.burst);
-    let queue = Array.from({ length: n }, (_, i) => i);
+    let order = Array.from({ length: n }, (_, i) => i).sort((a, b) => (tasks[a].arrival || 0) - (tasks[b].arrival || 0));
+    let queue = [];
+    let inQueue = new Array(n).fill(false);
+    let currentTime = 0;
 
-    while (queue.length > 0) {
+    const pushArrived = (tLim) => {
+      for (let idx of order) {
+        if ((tasks[idx].arrival || 0) <= tLim && !inQueue[idx] && rem[idx] > 0) {
+          queue.push(idx);
+          inQueue[idx] = true;
+        }
+      }
+    };
+
+    pushArrived(currentTime);
+
+    while (queue.length > 0 || rem.some(r => r > 0)) {
+      if (queue.length === 0) {
+        let nextArr = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (rem[i] > 0 && (tasks[i].arrival || 0) < nextArr) nextArr = tasks[i].arrival || 0;
+        }
+        currentTime = nextArr;
+        pushArrived(currentTime);
+        if (queue.length === 0) continue;
+      }
+
       let idx = queue.shift();
+      inQueue[idx] = false;
+
       let run = Math.min(qVal, rem[idx]);
       let start_t = currentTime;
       let end_t = currentTime + run;
@@ -238,18 +365,102 @@ function localSchedule(algoId, tasks, quantum) {
         duration: run
       });
 
+      pushArrived(currentTime);
+
       if (rem[idx] > 0) {
         queue.push(idx);
+        inQueue[idx] = true;
       } else {
         ct[idx] = currentTime;
-        tat[idx] = currentTime;
-        wt[idx] = currentTime - tasks[idx].burst;
+        tat[idx] = ct[idx] - (tasks[idx].arrival || 0);
+        wt[idx] = tat[idx] - tasks[idx].burst;
+      }
+    }
+  } else if (algoId === 5 || algoId === 6) {
+    // 5 = SRTF, 6 = Preemptive Priority
+    let rem = tasks.map(t => t.burst);
+    let completed = 0;
+    let minArr = Math.min(...tasks.map(t => t.arrival || 0));
+    let currentTime = minArr;
+    let currentProc = -1;
+    let sliceStart = currentTime;
+
+    while (completed < n) {
+      let ready = [];
+      for (let i = 0; i < n; i++) {
+        if ((tasks[i].arrival || 0) <= currentTime && rem[i] > 0) ready.push(i);
+      }
+
+      if (ready.length === 0) {
+        if (currentProc !== -1) {
+          slices.push({
+            taskId: tasks[currentProc].id,
+            taskIndex: currentProc,
+            start: sliceStart,
+            end: currentTime,
+            duration: currentTime - sliceStart
+          });
+          currentProc = -1;
+        }
+        let nextArr = Infinity;
+        for (let i = 0; i < n; i++) {
+          if (rem[i] > 0 && (tasks[i].arrival || 0) < nextArr) nextArr = tasks[i].arrival || 0;
+        }
+        currentTime = nextArr;
+        sliceStart = currentTime;
+        continue;
+      }
+
+      let bestIdx;
+      if (algoId === 5) {
+        // SRTF: min remaining time
+        ready.sort((a, b) => rem[a] - rem[b] || (tasks[a].arrival || 0) - (tasks[b].arrival || 0) || tasks[a].id - tasks[b].id);
+        bestIdx = ready[0];
+      } else {
+        // Priority Preemptive: min priority value
+        ready.sort((a, b) => tasks[a].priority - tasks[b].priority || (tasks[a].arrival || 0) - (tasks[b].arrival || 0) || tasks[a].id - tasks[b].id);
+        bestIdx = ready[0];
+      }
+
+      if (bestIdx !== currentProc) {
+        if (currentProc !== -1) {
+          slices.push({
+            taskId: tasks[currentProc].id,
+            taskIndex: currentProc,
+            start: sliceStart,
+            end: currentTime,
+            duration: currentTime - sliceStart
+          });
+        }
+        currentProc = bestIdx;
+        sliceStart = currentTime;
+      }
+
+      rem[bestIdx]--;
+      currentTime++;
+
+      if (rem[bestIdx] === 0) {
+        completed++;
+        ct[bestIdx] = currentTime;
+        tat[bestIdx] = ct[bestIdx] - (tasks[bestIdx].arrival || 0);
+        wt[bestIdx] = tat[bestIdx] - tasks[bestIdx].burst;
+
+        slices.push({
+          taskId: tasks[bestIdx].id,
+          taskIndex: bestIdx,
+          start: sliceStart,
+          end: currentTime,
+          duration: currentTime - sliceStart
+        });
+        currentProc = -1;
+        sliceStart = currentTime;
       }
     }
   }
 
   const avgWT = wt.reduce((a, b) => a + b, 0) / n;
   const avgTAT = tat.reduce((a, b) => a + b, 0) / n;
+  const totalDuration = slices.length > 0 ? Math.max(...slices.map(s => s.end)) : 0;
 
   const taskStats = tasks.map((t, i) => ({
     id: t.id,
@@ -267,7 +478,7 @@ function localSchedule(algoId, tasks, quantum) {
     quantum: algoId === 4 ? quantum : null,
     avgWT: parseFloat(avgWT.toFixed(2)),
     avgTAT: parseFloat(avgTAT.toFixed(2)),
-    totalDuration: currentTime,
+    totalDuration,
     taskStats,
     slices
   };
@@ -334,6 +545,7 @@ function renderSchedulingResults(data) {
         <span class="w-2.5 h-2.5 rounded-full inline-block" style="background-color: ${color.bg}"></span>
         <span>T${ts.id}</span>
       </td>
+      <td class="py-2.5 px-4 text-slate-300">${ts.arrival ?? 0}</td>
       <td class="py-2.5 px-4">${ts.burst}</td>
       <td class="py-2.5 px-4">${ts.priority}</td>
       <td class="py-2.5 px-4 text-cyan-300 font-semibold">${ts.waiting}</td>
@@ -356,12 +568,12 @@ async function compareAllAlgorithms() {
     const data = await res.json();
     renderCompareResults(data);
   } catch (err) {
-    // Client-side fallback
+    // Client-side fallback for all 6 algorithms
     const algorithms = [];
     let bestWT = Infinity;
     let bestAlgo = "";
 
-    for (let a = 1; a <= 4; a++) {
+    for (let a = 1; a <= 6; a++) {
       const r = localSchedule(a, state.tasks, quantum);
       algorithms.push({
         algoId: a,
